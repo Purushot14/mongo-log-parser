@@ -11,6 +11,9 @@ from .utils.json_utils.json_decoder import JSONDecoder
 from .utils.json_utils.str_to_json import get_json_from_long_text, get_json_array_str_from_long_text
 from .utils.regex_helper import get_ip_addresses_from_text
 
+counters = ["keysExamined", "docsExamined", "cursorExhausted", "numYields", "nreturned", "queryHash", "reslen",
+            "planCacheKey"]
+
 
 class LogBase:
 
@@ -22,7 +25,7 @@ class LogBase:
         self.category = None
         self.thread = None
         self.msg = None
-        self.tokens = None
+        self.tokens: list = []
         self.namespace = None
         self.index_key = None
         self.index_name = None
@@ -43,6 +46,14 @@ class LogBase:
         self.cluster_time = None
         self.read_preference = None
         self.query = None
+        self.keysExamined = None
+        self.docsExamined = None
+        self.cursorExhausted = None
+        self.numYields = None
+        self.nreturned = None
+        self.queryHash = None
+        self.reslen = None
+        self.planCacheKey = None
         self.parse_log_str()
 
     def __setattr__(self, key, value):
@@ -67,6 +78,14 @@ class LogBase:
         #     return self._convert_to_dict(json_str.replace(index_key, updated_key))
         return loaded_json
 
+    def _update_counter_values(self, tokens: List[str]):
+        for token in tokens:
+            for counter in counters:
+                if token.startswith(f'{counter}:'):
+                    value = token.split(":")[-1]
+                    self.__setattr__(counter, int(value) if value.isdigit() else value)
+                    break
+
     def _parse_index_msg(self, msg: list):
         if msg[0] == "index" and msg[1] == "build:":
             if msg[2] == "starting":
@@ -86,11 +105,11 @@ class LogBase:
             elif msg[2] == "collection":
                 self.sub_category = "collection_scan"
                 self.scanned_records = int(msg[6])
-                self.taken_time = int(msg[-2])
+                self.taken_time = int(msg[-2]) * 1000
             elif msg[2] == "inserted":
                 self.sub_category = "collection_scan"
                 self.inserted = int(msg[3])
-                self.taken_time = int(msg[-2])
+                self.taken_time = int(msg[-2]) * 1000
             elif msg[2] == "done":
                 self.sub_category = "index_created"
                 self.index_name = msg[5]
@@ -152,16 +171,18 @@ class LogBase:
         return self._parse_msg(msg)
 
     def _parse_repl_msg(self, msg: List[str]):
-        mm = self._line_str
         if msg[0] == 'applied' and msg[2] in ('command', 'CRUD'):
             self.sub_category = "replica_update"
-            self.namespace = msg[1]
+            replica_update = get_json_from_long_text(self._line_str)
+            if replica_update:
+                self.namespace = replica_update['o']['idIndex']['ns']
+            else:
+                self.namespace = msg[1]
         else:
             logging.info(msg)
         return self._parse_msg(msg)
 
     def _parse_command_msg(self, msg: List[str]):
-        mm = self._line_str
         if msg[0] == 'command' and msg[2] == 'appName:':
             self.client_details = {"application": {"name": self.msg[self.msg.find("appName:") + 8: self.msg.find("command:")]}}
             self.sub_category = msg[msg.index("command:") + 1]
@@ -177,9 +198,14 @@ class LogBase:
             self.cluster_time = query['$clusterTime']
             self.read_preference = query['$readPreference']['mode']
             self.query = aggregate_pipeline
+            self._update_counter_values(self.tokens[self.tokens.index("planSummary:"):])
         else:
             logging.info(msg)
         return self._parse_msg(msg)
+
+    def _parse_log_msg(self, msg):
+        if msg:
+            raise Exception("")
 
     def parse_log_str(self):
         # fp.seek(0)
@@ -192,25 +218,9 @@ class LogBase:
         self.log_level = self.tokens[1]
         self.category = self.tokens[2]
         self.thread = self.tokens[3].replace("[", "").replace(']', '')
+        if self.tokens[-1].endswith("ms"):
+            self.taken_time = int(self.tokens[-1][:-2])
         self.msg = self._parse_msg(self.tokens[4:])
-        getattr(self, f"_parse_{self.category.lower()}_msg", self._parse_msg)(self.tokens[4:])
+        getattr(self, f"_parse_{self.category.lower()}_msg", self._parse_log_msg)(self.tokens[4:])
         if not self.sub_category:
             logging.info("Yes")
-
-
-"""
-def parserLog(fp):
-    fp.seek(0)
-    line = None
-    while not line== "":
-        line = fp.readline()
-        try:
-            tokens = line.split(maxsplit=4)
-            _log = {"time": tokens[0], "logLevel": tokens[1],
-                "operator": tokens[2], "_operator": tokens[3], "msg": tokens[3:]}
-            logs.setdefault(_log["operator"], []).append(_log)
-        except Exception as e:
-            logging.info("ERROR: ", e)
-            logging.info("LINE: ", line)
-
-"""

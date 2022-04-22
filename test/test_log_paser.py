@@ -37,6 +37,7 @@ class TestLogBase(TestMongoBase):
                 except Exception as e:
                     logging.exception("ERROR: %s ", e)
                     logging.info("LINE: %s", line)
+                    raise e
         logging.info(logs)
 
     def test_003_parse_log_str_aggregate(self):
@@ -69,4 +70,17 @@ class TestLogBase(TestMongoBase):
         assert not lb.allow_disk_use
         self.assertEqual(lb.namespace, 'Database001.UsersCollection')
         assert lb.query and lb.sub_category == 'aggregate' and lb.category == 'COMMAND' and lb.thread and 'conn354100'
+        assert lb.keysExamined == 16 and lb.docsExamined == 15 and lb.cursorExhausted == 1 and lb.numYields == 0
+        assert lb.nreturned == 0 and lb.queryHash == "8EF5E40B" and lb.planCacheKey == "97E4EA5B"
+        assert lb.reslen == 239
         logging.info(lb)
+        
+    def test_004_parse_log_str_repl(self):
+        log_str = '2022-02-15T02:44:58.377+0000 I  REPL     [repl-writer-worker-2244] applied op: ' \
+                  'command { ts: Timestamp(1644893098, 1), t: 760, h: 0, v: 2, op: "c", ns: "Database001.$cmd", ' \
+                  'ui: UUID("964586f8-cad9-4d62-bbc1-6584627d2507"), wall: new Date(1644893098253), o: { create: ' \
+                  '"UserCollection", idIndex: { v: 2, key: { _id: 1 }, name: "_id_",' \
+                  ' ns: "Database001.UserCollection" } ' \
+                  '} }, took 114ms '
+        lb = LogBase(log_str, 1)
+        assert lb.namespace == "Database001.UserCollection" and lb.sub_category == 'replica_update'
