@@ -58,7 +58,7 @@ class LogBase:
 
     def __setattr__(self, key, value):
         if key == "namespace" and value:
-            self.database, self.collection = value.split('.')
+            self.database, self.collection = value.split('.', 1)
         return super().__setattr__(key, value)
 
     @staticmethod
@@ -157,7 +157,6 @@ class LogBase:
         return self._parse_msg(msg)
 
     def _parse_storage_msg(self, msg: List[str]):
-        mm = self._line_str
         if msg[0] == 'createCollection:':
             if not self.thread.startswith("repl-writer-worker"):
                 logging.info(msg)
@@ -165,7 +164,7 @@ class LogBase:
             self.namespace = msg[1]
         elif msg[0] == "Index" and msg[1] == "build":
             self.sub_category = "index_repl_writer"
-            self.namespace = msg[4]
+            self.namespace = msg[5] if msg[2] == "completed" else msg[4]
         else:
             logging.info(msg)
         return self._parse_msg(msg)
@@ -175,7 +174,13 @@ class LogBase:
             self.sub_category = "replica_update"
             replica_update = get_json_from_long_text(self._line_str)
             if replica_update:
-                self.namespace = replica_update['o']['idIndex']['ns']
+                database = replica_update['ns'].split('.')[0]
+                if collection := replica_update['o'].get('createIndexes'):
+                    self.namespace = f'{database}.{collection}'
+                elif msg[2] == "CRUD" and database == "config":
+                    self.namespace = replica_update['ns']
+                else:
+                    self.namespace = replica_update['o']['idIndex']['ns']
             else:
                 self.namespace = msg[1]
         else:
@@ -186,7 +191,10 @@ class LogBase:
         if msg[0] == 'command' and msg[2] == 'appName:':
             self.client_details = {"application": {"name": self.msg[self.msg.find("appName:") + 8: self.msg.find("command:")]}}
             self.sub_category = msg[msg.index("command:") + 1]
-            self.namespace = msg[1]
+            if msg[1].startswith("admin"):
+                self.namespace = msg[1]
+            else:
+                self.namespace = f'{msg[1]}.'
         elif msg[0] == "command" and msg[3] in ('aggregate',):
             self.sub_category = msg[3]
             self.namespace = msg[1]
