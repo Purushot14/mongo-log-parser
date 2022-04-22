@@ -174,17 +174,19 @@ class LogBase:
             self.sub_category = "replica_update"
             replica_update = get_json_from_long_text(self._line_str)
             if replica_update:
-                database = replica_update['ns'].split('.')[0]
-                if collection := replica_update['o'].get('createIndexes'):
-                    self.namespace = f'{database}.{collection}'
-                elif msg[2] == "CRUD" and database == "config":
+                if msg[2] == "CRUD":
                     self.namespace = replica_update['ns']
                 else:
-                    self.namespace = replica_update['o']['idIndex']['ns']
+                    collection = replica_update['o'].get('createIndexes') or replica_update['o'].get('drop')
+                    database = replica_update['ns'].split('.')[0]
+                    if collection:
+                        self.namespace = f'{database}.{collection}'
+                    else:
+                        self.namespace = replica_update['o']['idIndex']['ns']
             else:
                 self.namespace = msg[1]
         else:
-            logging.info(msg)
+            raise
         return self._parse_msg(msg)
 
     def _parse_command_msg(self, msg: List[str]):
@@ -210,6 +212,10 @@ class LogBase:
         else:
             logging.info(msg)
         return self._parse_msg(msg)
+
+    def _parse_write_msg(self, msg: List[str]):
+        # todo: need to update later
+        self.msg
 
     def _parse_log_msg(self, msg):
         if msg:

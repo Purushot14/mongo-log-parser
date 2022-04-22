@@ -100,6 +100,14 @@ class TestLogBase(TestMongoBase):
                   'B523746E16FE1A21D1721ECD36B321FB8B0B06F860AF499D095C8666AEC58C6E) } } }, took 19ms '
         lb = LogBase(log_str, 1)
         assert lb.namespace == 'config.system.sessions' and lb.sub_category == 'replica_update'
+        log_str = '2022-02-15T02:50:44.332+0000 I  REPL     [repl-writer-worker-2243] applied op: CRUD { ts: ' \
+                  'Timestamp(1644893444, 3), t: 760, h: 0, v: 2, op: "i", ns: "Database001.UserCollection", ' \
+                  'ui: UUID("d0cd4773-00a7-40c6-bdee-cb23cf8ab449"), wall: new Date(1644893444206), lsid: { id: UUID(' \
+                  '"890324d8-8696-4c57-b491-617d1d282669"), uid: BinData(0, ' \
+                  'FD39643E517FA4C6A10C5151564CBE2ACD5E8CE9090051A227BD594E3DC22689) }, txnNumber: 8, stmtId: 0, ' \
+                  'prevOpTime: { ts: Timestamp(0, 0), t: -1 }, o: { _id: "User001" } }, took 118ms '
+        lb = LogBase(log_str, 1)
+        assert lb.namespace == USER_COLLECTION_NAMESPACE and lb.sub_category == 'replica_update'
 
     def test_005_parse_log_str_storage(self):
         log_str = '2022-02-15T02:45:00.184+0000 I  STORAGE  [IndexBuildsCoordinatorMongod-656] Index build completed ' \
