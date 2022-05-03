@@ -12,4 +12,4 @@ class TestMongoBase(unittest.TestCase):
 
     def setUp(self):
         super(TestMongoBase, self).setUp()
-        self.log_file_path = "mock/mongo.log"
+        self.log_file_path = "mock/mongo2.log"

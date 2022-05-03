@@ -5,14 +5,16 @@ __author__ = 'Prakash14'
 
 import json
 import logging
+from json import JSONDecodeError
 from typing import List
 
 from .utils.json_utils.json_decoder import JSONDecoder
-from .utils.json_utils.str_to_json import get_json_from_long_text, get_json_array_str_from_long_text
+from .utils.json_utils.str_to_json import get_json_from_long_text, get_json_array_str_from_long_text, \
+    get_json_str_from_long_text
 from .utils.regex_helper import get_ip_addresses_from_text
 
 counters = ["keysExamined", "docsExamined", "cursorExhausted", "numYields", "nreturned", "queryHash", "reslen",
-            "planCacheKey"]
+            "planCacheKey", "ninserted", "keysInserted", ]
 
 
 class LogBase:
@@ -172,7 +174,11 @@ class LogBase:
     def _parse_repl_msg(self, msg: List[str]):
         if msg[0] == 'applied' and msg[2] in ('command', 'CRUD'):
             self.sub_category = "replica_update"
-            replica_update = get_json_from_long_text(self._line_str)
+            try:
+                replica_update = get_json_from_long_text(self._line_str)
+            except JSONDecodeError:
+                object_str = get_json_str_from_long_text(self._line_str[self._line_str.find("o:") + 2:])
+                replica_update = get_json_from_long_text(self._line_str.replace(object_str, '{}'))
             if replica_update:
                 if msg[2] == "CRUD":
                     self.namespace = replica_update['ns']
@@ -185,39 +191,125 @@ class LogBase:
                         self.namespace = replica_update['o']['idIndex']['ns']
             else:
                 self.namespace = msg[1]
+        elif msg[0] in ('Canceling', 'Scheduling', "Restarting", "Scheduled", "transition", "Resetting", "Entering"):
+            pass
         else:
-            raise
+            # Note: all REPL unhandled logs are skipped tamp
+            pass
+            # raise
         return self._parse_msg(msg)
 
     def _parse_command_msg(self, msg: List[str]):
-        if msg[0] == 'command' and msg[2] == 'appName:':
-            self.client_details = {"application": {"name": self.msg[self.msg.find("appName:") + 8: self.msg.find("command:")]}}
-            self.sub_category = msg[msg.index("command:") + 1]
-            if msg[1].startswith("admin"):
+        if msg[0] == "warning:" and msg[14] == 'command':
+            msg = msg[14:]
+        if msg[0] == 'command':
+            if msg[2] == 'appName:':
+                self.client_details = {"application": {"name": self.msg[self.msg.find("appName:") + 8: self.msg.find("command:")]}}
+                self.sub_category = msg[msg.index("command:") + 1]
+                if msg[1].startswith("admin"):
+                    self.namespace = msg[1]
+                else:
+                    self.namespace = f'{msg[1]}.'
+            elif msg[3] in ('aggregate', 'find', "getMore", "findAndModify", "count"):
+                self.sub_category = msg[3]
+                self.namespace = msg[1]
+                query_json_str = None
+                update_json_str = None
+                fields_json_str = None
+                sort_json_str = None
+                if msg[3] in ('find', 'findAndModify', "count"):
+                    if "filter:" in self.msg:
+                        query_json_str = get_json_str_from_long_text(self.msg[self.msg.find("filter"):])
+                    if "fields:" in self.msg:
+                        fields_json_str = get_json_str_from_long_text(self.msg[self.msg.find("fields:"):])
+                    if "sort:" in self.msg:
+                        sort_json_str = get_json_str_from_long_text(self.msg[self.msg.find("sort:"):])
+                    if "query:" in self.msg:
+                        query_json_str = get_json_str_from_long_text(self.msg[self.msg.find("query"):])
+                    if "update:" in self.msg:
+                        update_json_str = get_json_str_from_long_text(self.msg[self.msg.find("update:"):])
+                elif "pipeline:" in self.msg:
+                    query_json_str = get_json_array_str_from_long_text(self.msg[self.msg.find("pipeline"):])
+                msg_str = self.msg.replace(query_json_str, '"filter_key"') if query_json_str else self.msg
+                msg_str = self.msg.replace(update_json_str, '"filter_key"') if update_json_str else msg_str
+                msg_str = self.msg.replace(fields_json_str, '"filter_key"') if fields_json_str else msg_str
+                msg_str = self.msg.replace(sort_json_str, '"filter_key"') if sort_json_str else msg_str
+                query = get_json_from_long_text(msg_str)
+                self.allow_disk_use = query.get('allowDiskUse') or False
+                self.cursor = query.get('cursor')
+                self.cluster_time = query.get('$clusterTime')
+                self.read_preference = query.get('$readPreference', {}).get('mode')
+                self.query = query_json_str
+                self.sort = sort_json_str
+                self.projection = fields_json_str
+                self.update_query = update_json_str
+                self.limit = query.get("limit")
+                self.batch_size = query.get('batchSize')
+                self.client_details = query.get("$client")
+                self._update_counter_values(self.tokens)
+            elif msg[3] in ('update', 'delete', 'insert', "createIndexes", "create"):
+                self.sub_category = msg[3]
+                query_json_str = None
+                update_json_str = None
+                updated_update_json_str = None
+                if "updates:" in self.msg:
+                    update_json_str = get_json_array_str_from_long_text(self.msg[self.msg.find("updates:"):])
+                    query_json_str = get_json_str_from_long_text(update_json_str[update_json_str.find(" q: "):])
+                    update_query = get_json_str_from_long_text(update_json_str[update_json_str.find(" u: "):])
+                    updated_update_json_str = update_json_str
+                    if update_query:
+                        updated_update_json_str = updated_update_json_str.replace(update_query, '"UpdateQuery"')
+                    if query_json_str:
+                        updated_update_json_str = updated_update_json_str.replace(query_json_str, '"Query"')
+                msg_str = self.msg.replace(update_json_str, updated_update_json_str) if update_json_str else self.msg
+                query = get_json_from_long_text(msg_str)
+                self.namespace = f"{query['$db']}.{query[self.sub_category]}"
+                if self.sub_category == "createIndexes":
+                    self.indexes = query['indexes']
+                self.op_ordered = query.get("ordered")
+                self.read_preference = query.get('$readPreference', {}).get('mode')
+                self._update_counter_values(msg)
+            elif msg[3] in ('listIndexes', 'saslStart', "isMaster", "saslContinue",
+                                                    "replSetRequestVotes", "replSetUpdatePosition", "killCursors"):
+                # TODO: need to handle 'isMaster'
+                self.sub_category = msg[3]
                 self.namespace = msg[1]
             else:
-                self.namespace = f'{msg[1]}.'
-        elif msg[0] == "command" and msg[3] in ('aggregate',):
-            self.sub_category = msg[3]
-            self.namespace = msg[1]
-            aggregate_pipeline = get_json_array_str_from_long_text(self.msg[self.msg.find("pipeline"):])
-
-            query = get_json_from_long_text(self.msg.replace(aggregate_pipeline, '"aggregate_pipeline"'))
-            self.allow_disk_use = query['allowDiskUse']
-            self.cursor = query['cursor']
-            self.cluster_time = query['$clusterTime']
-            self.read_preference = query['$readPreference']['mode']
-            self.query = aggregate_pipeline
-            self._update_counter_values(self.tokens[self.tokens.index("planSummary:"):])
+                raise
+        elif msg[0] in ("CMD:",):
+            self.sub_category = msg[1]
+            self.namespace = msg[2]
+        elif msg[0] in ("task:", "serverStatus", "Unable"):
+            # TODO: Temp skipped
+            pass
         else:
-            logging.info(msg)
+            # logging.info(msg)
+            raise
         return self._parse_msg(msg)
 
     def _parse_write_msg(self, msg: List[str]):
         # todo: need to update later
         self.msg
 
+    def _parse_election_msg(self, msg: List[str]):
+        # todo: need to update later
+        self.msg
+
+    def _parse_connpool_msg(self, msg: List[str]):
+        # todo: need to update later
+        self.msg
+
+    def _parse_query_msg(self, msg: List[str]):
+        # todo: need to update later
+        self.msg
+
+    def _parse_control_msg(self, msg: List[str]):
+        # todo: need to update later
+        self.msg
+
     def _parse_log_msg(self, msg):
+        if self.category == '-':
+            return
         if msg:
             raise Exception("")
 

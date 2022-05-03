@@ -24,6 +24,9 @@ class TestLogBase(TestMongoBase):
         logs = {}
         line_number = 0
         with open(self.log_file_path, encoding="latin-1") as fp:
+            for i in range(0, 888):
+                line = fp.__next__()
+                line_number += 1
             while True:
                 line_number += 1
                 line = fp.readline()
@@ -108,6 +111,9 @@ class TestLogBase(TestMongoBase):
                   'prevOpTime: { ts: Timestamp(0, 0), t: -1 }, o: { _id: "User001" } }, took 118ms '
         lb = LogBase(log_str, 1)
         assert lb.namespace == USER_COLLECTION_NAMESPACE and lb.sub_category == 'replica_update'
+        log_str = '2022-02-15T06:21:24.422+0000 I  REPL     [replexec-1113] Canceling catchup takeover callback'
+        lb = LogBase(log_str, 1)
+        assert lb.namespace is None
 
     def test_005_parse_log_str_storage(self):
         log_str = '2022-02-15T02:45:00.184+0000 I  STORAGE  [IndexBuildsCoordinatorMongod-656] Index build completed ' \
